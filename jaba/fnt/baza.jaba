@@ -1,0 +1,72 @@
+uzi tempo;
+uzi elen;
+uzi matem;
+
+fn baza() {
+    fik_ddrb(1);
+    fik_portb(0);
+    lig t = (9 >= 0) ^ malv;
+    se t {
+        lig i = 0;
+        buk i < 15 {
+            prokrasto(15);
+            fik_portb(1);
+            prokrasto(15);
+            fik_portb(0);
+            i = i + 1;
+        }
+    }
+    lig a: e16 = 39;
+    lig b = a;
+    se 9 < 0 {
+        prokrasto(15);
+        fik_portb(1);
+        prokrasto(15);
+        fik_portb(0);
+    } alie {
+        a = a <^ (-17);
+    }
+    a = a ^> (-17);
+    prokrasto(386);
+    se a != b {
+        lig i = 0;
+        buk i < 198 {
+            prokrasto(7);
+            fik_portb(1);
+            prokrasto(7);
+            fik_portb(0);
+            i = i + 1;
+        }
+    } alie {
+        prokrasto(86);
+        fik_portb(1);
+        prokrasto(86);
+        fik_portb(0);
+    }
+
+    {
+        prokrasto(386);
+        fik_portb(1);
+        prokrasto(386);
+        fik_portb(0);
+    }
+
+    se malv {
+        prokrasto(86);
+        fik_portb(1);
+        prokrasto(86);
+        fik_portb(0);
+    } alie {
+        red;
+    }
+
+    {
+        buk {
+            prokrasto(112);
+            fik_portb(1);
+            prokrasto(112);
+            fik_portb(0);
+        }
+    }
+    //red; //ne necese
+}

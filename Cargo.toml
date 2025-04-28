@@ -1,0 +1,9 @@
+[package]
+name = "JabaAVRCompiler"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = {version = "1.41.1", features = ["full"] }
+phf = { version = "0.11", features = ["macros"] }
+lazy_static = "1.5.0"
