@@ -179,11 +179,45 @@ impl ErrorsHandler {
         );
     }
 
-    //tmp
-    pub(crate) fn error_0713(glob_pos: GlobPos) {
+    pub(crate) fn error_0717(glob_pos: Option<GlobPos>) {
         Self::error(
-            String::from("funkcio ne estas baza"),
+            String::from("ne povas redefini funkcio"),
+            glob_pos,
+        );
+    }
+
+    pub(crate) fn error_0718(glob_pos: GlobPos) {
+        Self::error(
+            String::from("malgxusta rezulta tipo en efektivigo"),
             Some(glob_pos),
+        );
+    }
+
+    pub(crate) fn error_0719(glob_pos: GlobPos) {
+        Self::error(
+            String::from("malgxusta argumenta tipo en efektivigo"),
+            Some(glob_pos),
+        );
+    }
+
+    pub(crate) fn error_0721(glob_pos: GlobPos) {
+        Self::error(
+            String::from("ne povas redifini n"),
+            Some(glob_pos),
+        );
+    }
+
+    pub(crate) fn error_0722(name: String) {
+        Self::error(
+            format!("funkcio kun nomo '{name}' ne estis efektivigita"),
+            None,
+        );
+    }
+
+    pub(crate) fn error_0713() {
+        Self::error(
+            String::from("ne ekzistas baza funkcio"),
+            None,
         );
     }
 
@@ -193,7 +227,7 @@ impl ErrorsHandler {
             None,
         );
     }
-    //
+
 
     //table
 
@@ -269,12 +303,34 @@ impl ErrorsHandler {
     pub(crate) fn dev_error_0716() {
         Self::dev_error(String::from("std funkcio havas neniun nomo"));
     }
+
+    pub(crate) fn dev_error_0720() {
+        Self::dev_error(String::from("ne povas trovi fn datumoj"));
+    }
     //
 
     //codegen
     pub(crate) fn dev_error_0910(val: u8) {
         Self::dev_error(String::from(
             format!("sbiw atendas konst kun valoro 0..=63, trovita: {val}")
+        ));
+    }
+
+    pub(crate) fn dev_error_0911(val: u8) {
+        Self::dev_error(String::from(
+            format!("adiw atendas konst kun valoro 0..=63, trovita: {val}")
+        ));
+    }
+
+    pub(crate) fn dev_error_0912(val: u8) {
+        Self::dev_error(String::from(
+            format!("ldd atendas konst kun valoro 0..=63, trovita: {val}")
+        ));
+    }
+
+    pub(crate) fn dev_error_0913(val: u8) {
+        Self::dev_error(String::from(
+            format!("std atendas konst kun valoro 0..=63, trovita: {val}")
         ));
     }
     //
@@ -295,6 +351,13 @@ impl ErrorsHandler {
         Self::warning(
             String::from("fantomo kodo post red"),
             Some(glob_pos)
+        );
+    }
+
+    pub(crate) fn warning_0723(name: String) {
+        Self::warning(
+            format!("funkcio kun nomo '{name}' neniam estas uzata"),
+            None,
         );
     }
     //

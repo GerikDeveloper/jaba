@@ -13,12 +13,12 @@ pub(crate) enum Cat {
     Konst,
     Var,
     Tipo,
-    StdProc,
+    Fn,
     Bar,
     Mod,
 }
 
-#[derive(PartialEq, Clone, Hash, Eq)]
+#[derive(PartialEq, Clone, Hash, Eq, Debug)]
 pub(crate) enum Type {
     None,
     Num(TypeRange),
@@ -80,7 +80,7 @@ impl TypeSize {
     }
 }
 
-#[derive(Clone, PartialEq, Hash, Eq)]
+#[derive(Clone, PartialEq, Hash, Eq, Debug)]
 pub(crate) struct TypeRange {
     pub(crate) min: i32,
     pub(crate) max: i32,
@@ -137,6 +137,18 @@ pub(crate) struct Entry {
     pub(crate) prev: EntryRef,
 }
 
+impl Entry {
+    fn default() -> Self {
+        return Self {
+            name: String::new(),
+            cat: Cat::Bar,
+            typ: Type::None,
+            val: 0,
+            prev: None,
+        };
+    }
+}
+
 //Scope types
 const MODULE_SCOPE: i32 = 0;
 const BLOCK_SCOPE: i32 = 1;
@@ -185,7 +197,31 @@ impl ScopeType {
 }
 
 #[derive(Clone)]
+pub(crate) struct FnData {
+    name: String,
+    is_impl: bool,
+    is_used: bool,
+    pub(crate) arg_typ: Type,
+}
+
+impl FnData {
+    fn new(name: String, arg_typ: Type) -> Self {
+        return Self {
+            name,
+            is_impl: false,
+            is_used: false,
+            arg_typ,
+        };
+    }
+
+    fn default() -> Self {
+        return Self::new(String::new(), Type::None);
+    }
+}
+
+#[derive(Clone)]
 pub(crate) struct Table {
+    fns: Vec<FnData>,
     pub(crate) top: EntryRef,
     bottom: EntryRef,
 }
@@ -193,6 +229,7 @@ pub(crate) struct Table {
 impl Table {
     pub(crate) fn new() -> Self {
         return Self {
+            fns: Vec::new(),
             top: None,
             bottom: None,
         };
@@ -212,13 +249,67 @@ impl Table {
         );
     }
 
-    pub(crate) fn enter_sp(&mut self, code: i32) {//std proc
-        self.enter(
-            ImportGenBuf::get_fn_name(code),
-            Cat::StdProc,
-            ImportGenBuf::get_fn_ret_type(code),
-            code,
+    //arg typ, res typ
+    pub(crate) fn use_fn(&mut self, name: String, glob_pos: GlobPos) -> (Type, Type) {
+        let ent = self.find(name, Some(glob_pos));
+        return (
+            if let Some(fn_data) = self.fns.get_mut(ent.borrow().val as usize) {
+                fn_data.is_used = true;
+                fn_data.arg_typ.clone()
+            } else { ErrorsHandler::dev_error_0720(); Type::None },
+            ent.borrow().typ.clone(),
         );
+    }
+
+    pub(crate) fn get_fn_data(&mut self, name: String) -> Option<FnData> {
+        let fn_id = if let Some(ent) = self.find_some(name.clone()) {
+            if ent.borrow().cat != Cat::Fn { return None; }; ent.borrow().val
+        } else { return None; };
+        return if let Some(fn_data) = self.fns.get(fn_id as usize) {
+            Some(fn_data.clone())
+        } else { None }
+    }
+
+    pub(crate) fn decl_fn(&mut self, name: String, arg_typ: Type, res_typ: Type) -> EntryRef {
+        let val = self.fns.len();
+        self.fns.push(FnData::new(name.clone(), arg_typ));
+        let res = self.new_name(
+            name,
+            Cat::Fn,
+        );
+
+        let mut ent = Self::get_entry(res.clone());
+        ent.borrow_mut().typ = res_typ;
+        ent.borrow_mut().val = val as i32;
+        return res;
+    }
+
+    pub(crate) fn impl_fn(
+        &mut self, name: String, arg_typ: Type, res_typ: Type, glob_pos: GlobPos,
+    ) {
+        let fn_id = if let Some(decl) = self.find_some(name.clone()) {
+            if decl.borrow().cat != Cat::Fn {
+                ErrorsHandler::error_0717(Some(glob_pos.clone()));
+            }
+            if decl.borrow().typ != res_typ { ErrorsHandler::error_0718(glob_pos.clone()); }
+            if let Some(fn_data) = self.fns.get(decl.borrow().val as usize) {
+                if fn_data.is_impl { ErrorsHandler::error_0721(glob_pos.clone()); }
+                if fn_data.arg_typ != arg_typ { ErrorsHandler::error_0719(glob_pos); }
+            } else { ErrorsHandler::dev_error_0720(); }
+            decl.borrow().val
+        } else {
+            Self::get_entry(self.decl_fn(name, arg_typ, res_typ)).borrow().val
+        };
+        if let Some(fn_data) = self.fns.get_mut(fn_id as usize) {
+            fn_data.is_impl = true;
+        } else { ErrorsHandler::dev_error_0720(); }
+    }
+
+    pub(crate) fn check_fns(&mut self) {
+        for fun in &self.fns {
+            if fun.is_used && !fun.is_impl { ErrorsHandler::error_0722(fun.name.clone()); }
+            if !fun.is_used { ErrorsHandler::warning_0723(fun.name.clone()); }
+        }
     }
 
     pub(crate) fn new_name(&mut self, name: String, cat: Cat) -> EntryRef {
@@ -244,13 +335,7 @@ impl Table {
         return if let Some(ent) = ent_ref { ent } else {
             ErrorsHandler::dev_error_0615();
             //DummyReturn
-            Rc::new(RefCell::new(Entry {
-                name: String::new(),
-                cat: Cat::Bar,
-                typ: Type::None,
-                val: 0,
-                prev: None,
-            }))
+            Rc::new(RefCell::new(Entry::default()))
         }
     }
 
@@ -294,36 +379,33 @@ impl Table {
         return cur;
     }
 
-    pub(crate) fn compute_fn_stack_drop_sz(&self, fn_name: &String) -> i32 {
-        let mut drop_sz: i32 = 0;
-        let mut cur = self.get_top();
-        loop {
-            let mut break_flag = false;
-            match cur.borrow().cat {
-                Cat::Var => {
-                    drop_sz += match TypeSize::from(&cur.borrow().typ) {
-                        TypeSize::Reg => { 1 }
-                        TypeSize::Word => { 2 }
-                    };
-                }
-                Cat::Bar => { break_flag = cur.borrow().name == *fn_name; }
-                _ => {}
-            }
-            if break_flag { break; }
-            cur = {
-                let res = Self::get_entry(cur.borrow().prev.clone());
-                res
-            }
+    pub(crate) fn drop_fn_stack(&mut self, codegen: &mut CodeGen, fn_name: &String) {
+        let ent = self.find(fn_name.clone(), None);
+        if ent.borrow().cat != Cat::Fn { ErrorsHandler::error_0717(None); }
+        let res_typ = &ent.borrow().typ;
+        let arg_typ = &if let Some(fn_data) =
+            self.get_fn_data(fn_name.clone()) { fn_data.arg_typ } else {
+            ErrorsHandler::dev_error_0720();
+            Type::None
+        };
+        let mut shift = 0;
+        if *res_typ != Type::None {
+            shift -= match TypeSize::from(res_typ) {
+                TypeSize::Reg => { 1 }
+                TypeSize::Word => { 2 }
+            };
         }
-        return drop_sz;
+        if *arg_typ != Type::None {
+            shift -= match TypeSize::from(arg_typ) {
+                TypeSize::Reg => { 1 }
+                TypeSize::Word => { 2 }
+            };
+        }
+        shift -= 2; //ret addr
+        codegen.gen_set_sp_rel_bp(shift);
     }
 
-    pub(crate) fn drop_fn_stack(&self, codegen: &mut CodeGen, fn_name: &String) {
-        let drop_sz = self.compute_fn_stack_drop_sz(fn_name);
-        if drop_sz != 0 { codegen.gen_drop(drop_sz); }
-    }
-
-    pub(crate) fn find(&mut self, name: String, glob_pos: Option<GlobPos>) -> Rc<RefCell<Entry>> {
+    pub(crate) fn find_some(&mut self, name: String) -> Option<Rc<RefCell<Entry>>> {
         {
             self.get_bottom().borrow_mut().name = name.clone();
         }
@@ -333,8 +415,15 @@ impl Table {
             ent = Self::get_entry(prev);
         }
         if Rc::ptr_eq(&ent, &self.get_bottom()) {
-            ErrorsHandler::error_0616(glob_pos);
+            return None;
         }
-        return ent;
+        return Some(ent);
+    }
+
+    pub(crate) fn find(&mut self, name: String, glob_pos: Option<GlobPos>) -> Rc<RefCell<Entry>> {
+        return if let Some(res) = self.find_some(name) { res } else {
+            ErrorsHandler::error_0616(glob_pos);
+            Rc::new(RefCell::new(Entry::default()))
+        }
     }
 }

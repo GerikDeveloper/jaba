@@ -35,12 +35,17 @@ impl Compiler {
 
             table.open_scope(&ScopeType::Module);
 
+            table.decl_fn(String::from("baza"), Type::None, Type::None);
+            table.use_fn(String::from("baza"), lex_analyzer.get_glob_pos());
+
             let mut parser = Parser::new(lex_analyzer, table, codegen);
 
             parser.parse();
 
             let mut table = parser.get_table();
             let mut codegen = parser.get_codegen();
+
+            table.check_fns();
 
             table.close_scope(&mut codegen);
 

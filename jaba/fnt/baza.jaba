@@ -1,72 +1,61 @@
-uzi tempo;
 uzi elen;
-uzi matem;
+uzi tempo;
 
-fn baza() {
-    fik_ddrb(1);
-    fik_portb(0);
-    lig t = (9 >= 0) ^ malv;
-    se t {
-        lig i = 0;
-        buk i < 15 {
-            prokrasto(15);
-            fik_portb(1);
-            prokrasto(15);
-            fik_portb(0);
-            i = i + 1;
-        }
-    }
-    lig a: e16 = 39;
-    lig b = a;
-    se 9 < 0 {
-        prokrasto(15);
-        fik_portb(1);
-        prokrasto(15);
-        fik_portb(0);
+fn fib n: s16 -> s16 {
+    se (n == 0) || (n == 1) {
+        red 1;
     } alie {
-        a = a <^ (-17);
+        lig a = fib(n - 1);
+        lig b = fib(n - 2);
+        red a + b;
     }
-    a = a ^> (-17);
-    prokrasto(386);
-    se a != b {
-        lig i = 0;
-        buk i < 198 {
-            prokrasto(7);
-            fik_portb(1);
-            prokrasto(7);
-            fik_portb(0);
-            i = i + 1;
-        }
-    } alie {
-        prokrasto(86);
-        fik_portb(1);
-        prokrasto(86);
-        fik_portb(0);
-    }
-
-    {
-        prokrasto(386);
-        fik_portb(1);
-        prokrasto(386);
-        fik_portb(0);
-    }
-
-    se malv {
-        prokrasto(86);
-        fik_portb(1);
-        prokrasto(86);
-        fik_portb(0);
-    } alie {
-        red;
-    }
-
-    {
-        buk {
-            prokrasto(112);
-            fik_portb(1);
-            prokrasto(112);
-            fik_portb(0);
-        }
-    }
-    //red; //ne necese
 }
+
+
+fn en data: s16 {
+    buk data != 0 {
+        prokrasto(50);
+        fik_portb(1);
+        prokrasto(50);
+        fik_portb(0);
+        data = data - 1;
+    }
+}
+
+fn baza {
+    fik_ddrb(1);
+    lig i: s16 = 0;
+    buk {
+        en(fib(i));
+        prokrasto(150);
+        i = i + 1;
+    }
+}
+
+
+
+/*
+fn en data: s16 {
+    fik_ddrb(1);
+    lig i = 0;
+    buk i < 16 {
+        prokrasto(39);
+        prokrasto(5);
+        fik_portb(1);
+        prokrasto(5);
+        fik_portb(0);
+        prokrasto(5);
+        se (data & 0x01) == 1 { fik_portb(1); }
+        prokrasto(30);
+        fik_portb(0);
+        prokrasto(5);
+        fik_portb(1);
+        prokrasto(5);
+        fik_portb(0);
+        prokrasto(5);
+        prokrasto(39);
+        data = data >> 1;
+        i = i + 1;
+    }
+}
+*/

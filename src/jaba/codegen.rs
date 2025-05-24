@@ -11,7 +11,7 @@ use crate::jaba::table::{Type, TypeSize};
 pub(crate) enum ExprCmd {
     Cpy,
     Swap,
-    SP(i32), //std proc
+    FN(String, Type, Type),
     LdVar(i32),
     LdConst(i32),
     Neg,
@@ -147,20 +147,78 @@ impl ExprGenBuf {
         }
     }
 
-    fn gen_sp(codegen: &mut CodeGen, code: i32) {
-        codegen.gen_rcall(&ImportGenBuf::get_fn_name(code));
+    fn gen_fn(codegen: &mut CodeGen, name: &String, arg_typ: &Type, res_typ: &Type) {
+        //prep bp
+        if *arg_typ != Type::None {
+            codegen.gen_pop("r16"); //r16 - LOW arg
+            if TypeSize::from(&arg_typ) == TypeSize::Word {
+                codegen.gen_pop("r17"); //r17 - HIGH arg
+            }
+        }
+        codegen.gen_st_bp();
+        codegen.gen_sp_to_bp();
+        //reserved res mem
+        if *res_typ != Type::None {
+            codegen.gen_clr("r18");
+            if TypeSize::from(&res_typ) == TypeSize::Word {
+                codegen.gen_push("r18"); //r18 - HIGH res
+            }
+            codegen.gen_push("r18"); //r18 - LOW res
+        }
+        //
+        if *arg_typ != Type::None {
+            if TypeSize::from(&arg_typ) == TypeSize::Word {
+                codegen.gen_push("r17"); //r17 - HIGH arg
+            }
+            codegen.gen_push("r16"); //r16 - LOW arg
+        }
+        //
+
+        codegen.gen_rcall(name);
+
+        if *arg_typ != Type::None {
+            codegen.gen_pop("r18"); //r18 - LOW res
+            if TypeSize::from(&arg_typ) == TypeSize::Word {
+                codegen.gen_pop("r18"); //r18 - HIGH res
+            }
+        }
+
+        if *res_typ != Type::None {
+            codegen.gen_pop("r16"); //r16 - LOW res
+            if TypeSize::from(&res_typ) == TypeSize::Word {
+                codegen.gen_pop("r17"); //r17 - HIGH res
+            }
+        }
+
+        codegen.gen_ld_bp();
+
+        if *res_typ != Type::None {
+            if TypeSize::from(&res_typ) == TypeSize::Word {
+                codegen.gen_push("r17"); //r17 - HIGH res
+            }
+            codegen.gen_push("r16"); //r16 - LOW res
+        }
     }
 
     fn gen_ld_var(codegen: &mut CodeGen, typ_sz: &TypeSize, ptr: i32) {
         if *typ_sz == TypeSize::Word {
-            codegen.gen_ldi("XL", CodeGen::low(ptr + 1));
-            codegen.gen_ldi("XH", CodeGen::high(ptr + 1));
-            codegen.gen_ld("r16", "X");
+            let hptr = ptr + 1;
+            if hptr < 0 || hptr > 63 {
+                codegen.gen_ldi("XL", CodeGen::low(hptr));
+                codegen.gen_ldi("XH", CodeGen::high(hptr));
+                codegen.gen_add("XL", "YL");
+                codegen.gen_adc("XH", "YH");
+                codegen.gen_ld("r16", "X");
+            } else { codegen.gen_ldd("r16", "Y", hptr as u8); }
             codegen.gen_push("r16");
         }
-        codegen.gen_ldi("XL", CodeGen::low(ptr));
-        codegen.gen_ldi("XH", CodeGen::high(ptr));
-        codegen.gen_ld("r16", "X");
+        if ptr < 0 || ptr > 63 {
+            codegen.gen_ldi("XL", CodeGen::low(ptr));
+            codegen.gen_ldi("XH", CodeGen::high(ptr));
+            codegen.gen_add("XL", "YL");
+            codegen.gen_adc("XH", "YH");
+            codegen.gen_ld("r16", "X");
+        } else { codegen.gen_ldd("r16", "Y", ptr as u8); }
         codegen.gen_push("r16");
     }
 
@@ -284,7 +342,7 @@ impl ExprGenBuf {
                 codegen.gen_pop("XH");
                 codegen.gen_pop("r16");
                 codegen.gen_pop("r17");
-                codegen.gen_ldi("r18", 0);
+                codegen.gen_clr("r18");
 
                 let endlbl = &codegen.gen_delayed_label();
 
@@ -716,7 +774,7 @@ impl ExprGenBuf {
                 codegen.gen_ldi("r18", 1);
                 codegen.gen_cp("r16", "r17");
                 if *typ == Type::E8 { signed(codegen, endlbl); } else { unsigned(codegen, endlbl); }
-                codegen.gen_ldi("r18", 0);
+                codegen.gen_clr("r18");
                 codegen.apply_label(endlbl);
                 codegen.gen_push("r18");
             }
@@ -733,7 +791,7 @@ impl ExprGenBuf {
                 codegen.gen_cp("r16", "r18");
                 codegen.gen_cpc("r17", "r19");
                 if *typ == Type::E16 { signed(codegen, endlbl); } else { unsigned(codegen, endlbl); }
-                codegen.gen_ldi("r20", 0);
+                codegen.gen_clr("r20");
                 codegen.apply_label(endlbl);
                 codegen.gen_push("r20");
             }
@@ -787,7 +845,7 @@ impl ExprGenBuf {
         codegen.gen_brne(lbl); (-64 <= k <= 63) */
         let endlbl = &codegen.gen_delayed_label();
         codegen.gen_pop("r16");
-        codegen.gen_ldi("r17", 0);
+        codegen.gen_clr("r17");
         codegen.gen_cpse("r16", "r17");
         codegen.gen_rjmp(endlbl);
         codegen.gen_rjmp(lbl);
@@ -798,31 +856,41 @@ impl ExprGenBuf {
     pub(crate) fn gen(&mut self, cmd: ExprCmd) { self.cmds.push(cmd); }
 
     pub(crate) fn apply(&self, codegen: &mut CodeGen, typ: &Type) {
-        let typ_sz = &TypeSize::from(typ);
-        for cmd in &self.cmds {
-            match cmd {
-                ExprCmd::Cpy => { Self::gen_cpy(codegen, typ_sz); }
-                ExprCmd::Swap => { Self::gen_swap(codegen, typ_sz); }
-                ExprCmd::SP(code) => { Self::gen_sp(codegen, *code); }
-                ExprCmd::LdVar(ptr) => { Self::gen_ld_var(codegen, typ_sz, *ptr); }
-                ExprCmd::LdConst(val) => { Self::gen_ld_const(codegen, typ_sz, *val); }
-                ExprCmd::Neg => { Self::gen_neg(codegen, typ_sz); }
-                ExprCmd::Add => { Self::gen_add(codegen, typ_sz); }
-                ExprCmd::Sub => { Self::gen_sub(codegen, typ_sz); }
-                ExprCmd::And => { Self::gen_and(codegen, typ_sz); }
-                ExprCmd::Or => { Self::gen_or(codegen, typ_sz); }
-                ExprCmd::Xor => { Self::gen_xor(codegen, typ_sz); }
-                ExprCmd::Not => { Self::gen_not(codegen, typ); }
-                ExprCmd::LS => { Self::gen_ls(codegen, typ); }
-                ExprCmd::RS => { Self::gen_rs(codegen, typ);  }
-                ExprCmd::ROL => { Self::gen_rol(codegen, typ); }
-                ExprCmd::ROR => { Self::gen_ror(codegen, typ); }
-                ExprCmd::EQ => { Self::gen_eq(codegen, typ_sz); }
-                ExprCmd::NE => { Self::gen_ne(codegen, typ_sz); }
-                ExprCmd::LT => { Self::gen_lt(codegen, typ); }
-                ExprCmd::LE => { Self::gen_le(codegen, typ); }
-                ExprCmd::GT => { Self::gen_gt(codegen, typ); }
-                ExprCmd::GE => { Self::gen_ge(codegen, typ); }
+        if *typ == Type::None {
+            for cmd in &self.cmds {
+                if let ExprCmd::FN(name, arg, res) = cmd {
+                    Self::gen_fn(codegen, name, arg, res);
+                } else { ErrorsHandler::error_0100(None); }
+            }
+        } else {
+            let typ_sz = &TypeSize::from(typ);
+            for cmd in &self.cmds {
+                match cmd {
+                    ExprCmd::Cpy => { Self::gen_cpy(codegen, typ_sz); }
+                    ExprCmd::Swap => { Self::gen_swap(codegen, typ_sz); }
+                    ExprCmd::FN(name, arg, res) => {
+                        Self::gen_fn(codegen, name, arg, res);
+                    }
+                    ExprCmd::LdVar(ptr) => { Self::gen_ld_var(codegen, typ_sz, *ptr); }
+                    ExprCmd::LdConst(val) => { Self::gen_ld_const(codegen, typ_sz, *val); }
+                    ExprCmd::Neg => { Self::gen_neg(codegen, typ_sz); }
+                    ExprCmd::Add => { Self::gen_add(codegen, typ_sz); }
+                    ExprCmd::Sub => { Self::gen_sub(codegen, typ_sz); }
+                    ExprCmd::And => { Self::gen_and(codegen, typ_sz); }
+                    ExprCmd::Or => { Self::gen_or(codegen, typ_sz); }
+                    ExprCmd::Xor => { Self::gen_xor(codegen, typ_sz); }
+                    ExprCmd::Not => { Self::gen_not(codegen, typ); }
+                    ExprCmd::LS => { Self::gen_ls(codegen, typ); }
+                    ExprCmd::RS => { Self::gen_rs(codegen, typ); }
+                    ExprCmd::ROL => { Self::gen_rol(codegen, typ); }
+                    ExprCmd::ROR => { Self::gen_ror(codegen, typ); }
+                    ExprCmd::EQ => { Self::gen_eq(codegen, typ_sz); }
+                    ExprCmd::NE => { Self::gen_ne(codegen, typ_sz); }
+                    ExprCmd::LT => { Self::gen_lt(codegen, typ); }
+                    ExprCmd::LE => { Self::gen_le(codegen, typ); }
+                    ExprCmd::GT => { Self::gen_gt(codegen, typ); }
+                    ExprCmd::GE => { Self::gen_ge(codegen, typ); }
+                }
             }
         }
     }
@@ -839,40 +907,6 @@ pub(crate) enum StdModule {
     Matem,
 }
 
-lazy_static! {
-    static ref ARG_TYPE: HashMap<i32, Type> = HashMap::from([
-        (SPCode::SkrKar, Type::S8),
-        (SPCode::Prok, Type::S16),
-        (SPCode::Low, Type::S16),
-        (SPCode::High, Type::S16),
-        (SPCode::FikDDRB, Type::S8),
-        (SPCode::FikPORTB, Type::S8),
-    ]);
-}
-
-lazy_static! {
-    static ref RET_TYPE: HashMap<i32, Type> = HashMap::from([
-        (SPCode::SkrKar, Type::None),
-        (SPCode::Prok, Type::None),
-        (SPCode::Low, Type::S8),
-        (SPCode::High, Type::S8),
-        (SPCode::FikDDRB, Type::None),
-        (SPCode::FikPORTB, Type::None),
-    ]);
-}
-
-lazy_static! {
-    static ref FN_NAME: HashMap<i32, &'static str> = HashMap::from([
-        (SPCode::SkrKar, "skr_kar"),
-        (SPCode::Prok, "prokrasto"),
-        (SPCode::Low, "low"),
-        (SPCode::High, "high"),
-        (SPCode::FikDDRB, "fik_ddrb"),
-        (SPCode::FikPORTB, "fik_portb"),
-    ]);
-}
-
-
 #[derive(Clone)]
 pub(crate) struct ImportGenBuf {
     modules: HashSet<StdModule>
@@ -887,139 +921,67 @@ impl ImportGenBuf {
         self.modules.insert(module);
     }
 
-    pub(crate) fn get_fn_arg_type(code: i32) -> Type {
-        return if let Some(typ) = ARG_TYPE.get(&code) { typ.clone() } else {
-            ErrorsHandler::dev_error_0714();
-            Type::None
-        };
-    }
-
-    pub(crate) fn get_fn_ret_type(code: i32) -> Type {
-        return if let Some(typ) = RET_TYPE.get(&code) { typ.clone() } else {
-            ErrorsHandler::dev_error_0715();
-            Type::None
-        };
-    }
-
-    pub(crate) fn get_fn_name(code: i32) -> String {
-        return if let Some(res) = FN_NAME.get(&code) { res.to_string() } else {
-            ErrorsHandler::dev_error_0716();
-            String::new()
-        };
-    }
-
-    //ret ptr swapping
-    fn swap_arg(codegen: &mut CodeGen, code: i32) {
-        let typ = Self::get_fn_arg_type(code);
-        if typ == Type::None { return; }
-        let typ_sz = TypeSize::from(&typ);
-        match typ_sz {
-            TypeSize::Reg => {
-                //(r16, r17, r18, ...)
-                //(r16 - LOW, r17 - HIGH) - ret ptr
-                //r18 - arg
-                codegen.gen_pop("r16");
-                codegen.gen_pop("r17");
-                codegen.gen_pop("r18");
-                codegen.gen_push("r17");
-                codegen.gen_push("r16");
-                codegen.gen_push("r18");
-                //(r18, r16, r17, ...)
-            }
-            TypeSize::Word => {
-                //(r16, r17, r18, r19, ...)
-                //(r16 - LOW, r17 - HIGH) - ret ptr
-                //(r18 - LOW, r19 - HIGH) - arg
-                codegen.gen_pop("r16");
-                codegen.gen_pop("r17");
-                codegen.gen_pop("r18");
-                codegen.gen_pop("r19");
-                codegen.gen_push("r17");
-                codegen.gen_push("r16");
-                codegen.gen_push("r19");
-                codegen.gen_push("r18");
-                //(r18, r19, r16, r17, ...)
-            }
-        }
-    }
-
-    fn swap_ret(codegen: &mut CodeGen, code: i32) {
-        let typ = Self::get_fn_ret_type(code);
-        if typ == Type::None { return; }
-        let typ_sz = TypeSize::from(&typ);
-        match typ_sz {
-            TypeSize::Reg => {
-                //(r16, r18, r19 ...)
-                //r16 - ret
-                //(r18 - LOW, r19 - HIGH) - ret ptr
-                codegen.gen_pop("r16");
-                codegen.gen_pop("r18");
-                codegen.gen_pop("r19");
-                codegen.gen_push("r16");
-                codegen.gen_push("r19");
-                codegen.gen_push("r18");
-                //(r18, r19, r16, ...)
-            }
-            TypeSize::Word => {
-                //(r16, r17, r18, r19, ...)
-                //(r16 - LOW, r17 - HIGH) - ret
-                //(r18 - LOW, r19 - HIGH) - ret ptr
-                codegen.gen_pop("r16");
-                codegen.gen_pop("r17");
-                codegen.gen_pop("r18");
-                codegen.gen_pop("r19");
-                codegen.gen_push("r17");
-                codegen.gen_push("r16");
-                codegen.gen_push("r19");
-                codegen.gen_push("r18");
-                //(r18, r19, r16, r17, ...)
-            }
-        }
-    }
-    //
-
     //std functions (labels starts with std
     fn gen_skr_kar(codegen: &mut CodeGen) {
-        //init
+        //
+        codegen.clr_stsz();
+
         codegen.apply_label(&String::from("skr_kar"));
-        Self::swap_arg(codegen, SPCode::SkrKar);
+
+        codegen.gen_form_var(&TypeSize::Reg); // arg
+
+        codegen.gen_form_var(&TypeSize::Word); //ret addr
         //
 
-        //ret
-        Self::swap_ret(codegen, SPCode::SkrKar);
+
         codegen.gen_ret();
-        //
     }
 
     fn gen_prokrasto(codegen: &mut CodeGen) {
         //init
+        codegen.clr_stsz();
+
+
         codegen.apply_label(&String::from("prokrasto"));
-        Self::swap_arg(codegen, SPCode::Prok);
+
+        let arg_ptr = codegen.gen_form_var(&TypeSize::Word); // arg
+
+        codegen.gen_form_var(&TypeSize::Word); //ret addr
         //
 
+        ExprGenBuf::gen_ld_var(codegen, &TypeSize::Word, arg_ptr);
+
         //(YL, YH, ...)
-        codegen.gen_pop("YL");
-        codegen.gen_pop("YH");
+        codegen.gen_pop("ZL");
+        codegen.gen_pop("ZH");
         let oiterlbl = codegen.gen_label(); //outer
         codegen.gen_ldi("XL", CodeGen::low(28168));
         codegen.gen_ldi("XH", CodeGen::high(28168));
         let iiterlbl = codegen.gen_label(); //inner
         codegen.gen_sbiw("XH:XL", 1);
         codegen.gen_brne(&iiterlbl);
-        codegen.gen_sbiw("YH:YL", 1);
+        codegen.gen_sbiw("ZH:ZL", 1);
         codegen.gen_brne(&oiterlbl);
 
         //ret
-        Self::swap_ret(codegen, SPCode::Prok);
         codegen.gen_ret();
         //
     }
 
-    fn gen_low(codegen: &mut CodeGen) {
+    fn gen_malt(codegen: &mut CodeGen) {
         //init
-        codegen.apply_label(&String::from("low"));
-        Self::swap_arg(codegen, SPCode::Low);
+        codegen.clr_stsz();
+
+        codegen.apply_label(&String::from("malt"));
+
+        let res_ptr = codegen.gen_form_var(&TypeSize::Reg); // res
+
+        let arg_ptr = codegen.gen_form_var(&TypeSize::Word); // arg
+
+        codegen.gen_form_var(&TypeSize::Word); //ret addr
         //
+
+        ExprGenBuf::gen_ld_var(codegen, &TypeSize::Word, arg_ptr);
 
         //(r16, r17, ...)
         //r16 - LOW
@@ -1028,59 +990,110 @@ impl ImportGenBuf {
         codegen.gen_pop("r17");
         codegen.gen_push("r16");
         //(r16, ...)
+        codegen.gen_st_var(&TypeSize::Reg, res_ptr);
 
         //ret
-        Self::swap_ret(codegen, SPCode::Low);
         codegen.gen_ret();
         //
     }
 
-    fn gen_high(codegen: &mut CodeGen) {
+    fn gen_alt(codegen: &mut CodeGen) {
         //init
-        codegen.apply_label(&String::from("high"));
-        Self::swap_arg(codegen, SPCode::High);
+        codegen.clr_stsz();
+
+        codegen.apply_label(&String::from("alt"));
+
+        let res_ptr = codegen.gen_form_var(&TypeSize::Reg); // res
+
+        let arg_ptr = codegen.gen_form_var(&TypeSize::Word); // arg
+
+        codegen.gen_form_var(&TypeSize::Word); //ret addr
         //
+
+        ExprGenBuf::gen_ld_var(codegen, &TypeSize::Word, arg_ptr);
 
         //(r16, r17, ...)
         //r16 - LOW
         //r17 - HIGH
         codegen.gen_pop("r16");
-        //(r17, ...)
+        codegen.gen_pop("r17");
+        codegen.gen_push("r17");
+        //(r16, ...)
+
+        codegen.gen_st_var(&TypeSize::Reg, res_ptr);
 
         //ret
-        Self::swap_ret(codegen, SPCode::High);
+        codegen.gen_ret();
+        //
+    }
+
+    fn gen_gx_s16(codegen: &mut CodeGen) {
+        //init
+        codegen.clr_stsz();
+
+        codegen.apply_label(&String::from("gx_s16"));
+
+        let res_ptr = codegen.gen_form_var(&TypeSize::Word); // res
+
+        let arg_ptr = codegen.gen_form_var(&TypeSize::Reg); // arg
+
+        codegen.gen_form_var(&TypeSize::Word); //ret addr
+        //
+
+        ExprGenBuf::gen_ld_var(codegen, &TypeSize::Reg, arg_ptr);
+
+        //(r16, ...)
+        //r16 - LOW
+        //r17 - HIGH
+        codegen.gen_clr("r17");
+        codegen.gen_pop("r16");
+        codegen.gen_push("r17");
+        codegen.gen_push("r16");
+        //(r16, r17, ...)
+
+        codegen.gen_st_var(&TypeSize::Word, res_ptr);
+
+        //ret
         codegen.gen_ret();
         //
     }
 
     fn gen_fik_ddrb(codegen: &mut CodeGen) {
-        //init
-        codegen.apply_label(&String::from("fik_ddrb"));
-        Self::swap_arg(codegen, SPCode::FikDDRB);
         //
+        codegen.clr_stsz();
+
+        codegen.apply_label(&String::from("fik_ddrb"));
+
+        let arg_ptr = codegen.gen_form_var(&TypeSize::Reg); // arg
+
+        codegen.gen_form_var(&TypeSize::Word); //ret addr
+        //
+
+        ExprGenBuf::gen_ld_var(codegen, &TypeSize::Reg, arg_ptr);
 
         codegen.gen_pop("r16");
         codegen.gen_out(CodeGen::DDRB, "r16");
 
-        //ret
-        Self::swap_ret(codegen, SPCode::FikDDRB);
         codegen.gen_ret();
-        //
     }
 
     fn gen_fik_portb(codegen: &mut CodeGen) {
-        //init
-        codegen.apply_label(&String::from("fik_portb"));
-        Self::swap_arg(codegen, SPCode::FikPORTB);
         //
+        codegen.clr_stsz();
+
+        codegen.apply_label(&String::from("fik_portb"));
+
+        let arg_ptr = codegen.gen_form_var(&TypeSize::Reg); // arg
+
+        codegen.gen_form_var(&TypeSize::Word); //ret addr
+        //
+
+        ExprGenBuf::gen_ld_var(codegen, &TypeSize::Reg, arg_ptr);
 
         codegen.gen_pop("r16");
         codegen.gen_out(CodeGen::PORTB, "r16");
 
-        //ret
-        Self::swap_ret(codegen, SPCode::FikPORTB);
         codegen.gen_ret();
-        //
     }
     //
 
@@ -1093,7 +1106,11 @@ impl ImportGenBuf {
 
     fn gen_tempo(codegen: &mut CodeGen) { Self::gen_prokrasto(codegen); }
 
-    fn gen_matem(codegen: &mut CodeGen) { Self::gen_low(codegen); Self::gen_high(codegen); }
+    fn gen_matem(codegen: &mut CodeGen) {
+        Self::gen_malt(codegen);
+        Self::gen_alt(codegen);
+        Self::gen_gx_s16(codegen);
+    }
     //
 
     fn apply(&self, codegen: &mut CodeGen) {
@@ -1190,11 +1207,37 @@ impl CodeGen {
     //
 
     //mem
+    pub(crate) fn gen_sp_to_bp(&mut self) {
+        self.gen_in("YL", Self::SPL);
+        self.gen_in("YH", Self::SPH);
+        self.gen_sbiw("YH:YL", 63);
+    }
+
+    fn gen_movw(&mut self, word: &str, src_word: &str) {
+        cmd!(self, "movw {word}, {src_word}");
+    }
+
+    fn gen_mov(&mut self, reg: &str, src_reg: &str) {
+        cmd!(self, "mov {reg}, {src_reg}");
+    }
+
+    fn gen_clr(&mut self, reg: &str) { cmd!(self, "clr {reg}"); }
+
     fn gen_ldi(&mut self, reg: &str, val: u8) { cmd!(self, "ldi {reg}, {:#04x}", val); }
 
     fn gen_ld(&mut self, reg: &str, ptr_reg: &str) { cmd!(self, "ld {reg}, {ptr_reg}"); }
 
+    fn gen_ldd(&mut self, reg: &str, ptr_reg: &str, shift: u8) {
+        if shift > 64 { ErrorsHandler::dev_error_0912(shift); }
+        cmd!(self, "ldd {reg}, {ptr_reg}+{shift}");
+    }
+
     fn gen_st(&mut self, ptr_reg: &str, reg: &str) { cmd!(self, "st {ptr_reg}, {reg}"); }
+
+    fn gen_std(&mut self, ptr_reg: &str, reg: &str, shift: u8) {
+        if shift > 64 { ErrorsHandler::dev_error_0913(shift); }
+        cmd!(self, "std {ptr_reg}+{shift}, {reg}");
+    }
 
     fn gen_out(&mut self, addr: i32, reg: &str) { cmd!(self, "out {:#04x}, {reg}", addr); }
 
@@ -1223,6 +1266,11 @@ impl CodeGen {
     fn gen_sbiw(&mut self, reg: &str, val: u8) {
         if val > 63 { ErrorsHandler::dev_error_0910(val); }
         cmd!(self, "sbiw {reg}, {:#04x}", val);
+    }
+
+    fn gen_adiw(&mut self, reg: &str, val: u8) {
+        if val > 63 { ErrorsHandler::dev_error_0911(val); }
+        cmd!(self, "adiw {reg}, {:#04x}", val);
     }
 
     fn gen_lsl(&mut self, reg: &str) { cmd!(self, "lsl {reg}"); }
@@ -1268,21 +1316,42 @@ impl CodeGen {
 
     //tmp
     pub(crate) fn gen_st_var(&mut self, typ_sz: &TypeSize, ptr: i32) {
-        self.gen_ldi("XL", CodeGen::low(ptr));
-        self.gen_ldi("XH", CodeGen::high(ptr));
         self.gen_pop("r16");
-        self.gen_st("X", "r16");
-        if *typ_sz == TypeSize::Word {
-            self.gen_ldi("XL", CodeGen::low(ptr + 1));
-            self.gen_ldi("XH", CodeGen::high(ptr + 1));
-            self.gen_pop("r16");
+        if ptr < 0 || ptr > 63 {
+            self.gen_ldi("XL", CodeGen::low(ptr));
+            self.gen_ldi("XH", CodeGen::high(ptr));
+            self.gen_add("XL", "YL");
+            self.gen_adc("XH", "YH");
             self.gen_st("X", "r16");
+        } else { self.gen_std("Y", "r16", ptr as u8); }
+        if *typ_sz == TypeSize::Word {
+            self.gen_pop("r16");
+            let hptr = ptr + 1;
+            if hptr < 0 || hptr > 63 {
+                self.gen_ldi("XL", CodeGen::low(hptr));
+                self.gen_ldi("XH", CodeGen::high(hptr));
+                self.gen_add("XL", "YL");
+                self.gen_adc("XH", "YH");
+                self.gen_st("X", "r16");
+            } else { self.gen_std("Y", "r16", hptr as u8); }
         }
+    }
+
+    pub(crate) fn gen_st_bp(&mut self) {
+        self.gen_push("YH"); //HIGH
+        self.gen_push("YL"); //LOW
+        self.stack_sz += 2;
+    }
+
+    pub(crate) fn gen_ld_bp(&mut self) {
+        self.gen_pop("YL"); //LOW
+        self.gen_pop("YH"); //HIGH
+        self.stack_sz -= 2;
     }
 
     pub(crate) fn gen_form_var(&mut self, typ_sz: &TypeSize) -> i32 {
         self.stack_sz += match typ_sz { TypeSize::Reg => { 1 } TypeSize::Word => { 2 } };
-        let ptr = Self::RAMEND - self.stack_sz + 1;
+        let ptr = 63 - self.stack_sz + 1; //Base pointer is shifted by 63
         return ptr;
     }
 
@@ -1293,10 +1362,32 @@ impl CodeGen {
         self.gen_out(Self::SPH, "r16");
     }
 
+    pub(crate) fn gen_bp_to_sp(&mut self) {
+        self.gen_movw("XH:XL", "YH:YL");
+        self.gen_adiw("XH:XL", 63);
+        self.gen_out(Self::SPL, "XL");
+        self.gen_out(Self::SPH, "XH");
+    }
+
+    pub(crate) fn gen_set_sp_rel_bp(&mut self, mut shift: i32) {
+        shift += 63;
+        self.gen_ldi("XL", CodeGen::low(shift));
+        self.gen_ldi("XH", CodeGen::high(shift));
+        self.gen_add("XL", "YL");
+        self.gen_adc("XH", "YH");
+        self.gen_out(Self::SPL, "XL");
+        self.gen_out(Self::SPH, "XH");
+    }
+
     pub(crate) fn gen_drop(&mut self, sz: i32) {
         self.stack_sz -= sz;
-        self.gen_set_sp(Self::RAMEND - self.stack_sz);
+        self.gen_set_sp_rel_bp(self.stack_sz);
     }
+
+    pub(crate) fn clr_stsz(&mut self) { self.stack_sz = 0; }
+
+    pub(crate) fn inc_stsz(&mut self, delta: i32) { self.stack_sz += delta; }
+
     //
 
     const RAMEND: i32 = 0x025f;
@@ -1324,8 +1415,14 @@ impl CodeGen {
         self.gen_set_sp(Self::RAMEND);
         //
 
-        //self.gen_rcall(&String::from("baza"));
-        //self.gen_rjmp(&String::from("end"));
+        ExprGenBuf::gen_fn(
+            self,
+            &String::from("baza"),
+            &Type::None,
+            &Type::None
+        );
+
+        self.gen_rjmp(&String::from("end"));
     }
 
     pub(crate) fn end(&mut self) {

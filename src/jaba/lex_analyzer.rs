@@ -46,6 +46,7 @@ pub(crate) enum Lex { //B - bitwise, L - logical
     LBrac,
     RBrac,
     FN,
+    Sago,
     Red,
     EOF,
 }
@@ -196,7 +197,13 @@ impl LexAnalyzer {
                 self.num();
             }
             '+' => { self.src_driver.next_ch(); self.lex = Lex::Plus; }
-            '-' => { self.src_driver.next_ch(); self.lex = Lex::Minus; }
+            '-' => {
+                self.src_driver.next_ch();
+                if self.src_driver.get_ch() == '>' {
+                    self.src_driver.next_ch();
+                    self.lex = Lex::Sago;
+                } else { self.lex = Lex::Minus; }
+            }
             '&' => {
                 self.src_driver.next_ch();
                 if self.src_driver.get_ch() == '&' {
